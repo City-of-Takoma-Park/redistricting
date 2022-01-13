@@ -3,7 +3,7 @@ library(leafletwrappers)
 library(tidyverse)
 library(sf)
 
-wards_new <- st_read("./data/new_wards/Takoma_Park_Census_Blocks_2020_w_Ward_Options.shp") %>%
+wards_new <- st_read("./data/new_wards/TP_Census_Blocks_2020_w_Options.gdb") %>%
   rename_all(tolower) %>%
   st_transform(4326)
 
@@ -13,7 +13,7 @@ new_ward_funct <- function(df, opt_num){
   ward_chng <- paste0(ward, "_wardchng")
 
   df %>%
-    mutate(!!sym(ward_chng) := !!sym(ward) == current_wd)
+    mutate(!!sym(ward_chng) := !!sym(ward) == current_district)
 
 }
 
@@ -126,17 +126,19 @@ addpoly_legend <- function(basemap_select,
 }
 
 
+colnames(wards_new)
+
 label_funct <- function(df, option){
   label_output(df, label_text =
   "Block name: {name}<p></p>
-  Current Ward: {current_wd}<p></p>
+  Current Ward: {current_district}<p></p>
   Population: {pop_total}<p></p>
-  White residents: {pop_race_w}<p></p>
-  Black residents: {pop_race_b}<p></p>
-  Hispanic residents: {pop_hispra}<p></p>
-  Asian residents: {pop_race_a}<p></p>
-  Other residents: {pop_race_o}<p></p>
-  Multiracial residents: {pop_race_t}")
+  White residents: {pop_race_white}<p></p>
+  Black residents: {pop_race_black}<p></p>
+  Hispanic residents: {pop_hisprace_hisp_tot}<p></p>
+  Asian residents: {pop_race_asian}<p></p>
+  Other residents: {pop_race_other}<p></p>
+  Multiracial residents: {pop_race_tom}")
 }
 
 colors_wards <- leaflet::colorFactor(palette = c("#f0c45c", "#98ccf4", "#80ccb4", "#f8ec7c", "#7cb8d4", "#e8945c"), domain = 1:6, ordered = T)
@@ -150,7 +152,7 @@ leaflet_wards <- function(basemap, df, opt_num, grp = ": changed blocks", curr_w
       filter(!!sym(col) == F)
   }
 
-  addpoly_legend(basemap_select = basemap, df_select = df %>% st_drop_geometry(), pal_funct_select = colors_wards, variable_select = ifelse(curr_ward, "current_wd", paste0("option_", opt_num)), group_select =ifelse(curr_ward, "Current wards", paste0("Option ", opt_num, grp)), title_select = ifelse(curr_ward, "Current wards", paste0("Option ", opt_num, grp)), labels_select = label_funct(df %>% st_drop_geometry(), opt_num), .data = df)
+  addpoly_legend(basemap_select = basemap, df_select = df %>% st_drop_geometry(), pal_funct_select = colors_wards, variable_select = ifelse(curr_ward, "current_district", paste0("option_", opt_num)), group_select =ifelse(curr_ward, "Current wards", paste0("Option ", opt_num, grp)), title_select = ifelse(curr_ward, "Current wards", paste0("Option ", opt_num, grp)), labels_select = label_funct(df %>% st_drop_geometry(), opt_num), .data = df)
 }
 
 grp_vac <- c(
@@ -177,4 +179,4 @@ chng_map <- leaflet(wards_new) %>%
   add_wards()
 
 
-htmlwidgets::saveWidget(chng_map, file = "./chng_map.html")
+htmlwidgets::saveWidget(chng_map, file = "./redistrictingoptions.html")
