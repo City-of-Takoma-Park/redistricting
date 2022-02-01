@@ -2,6 +2,8 @@ library(sf)
 library(dplyr)
 library(tidyverse)
 
+library(tpfuncts)
+
 # -----------------------------
 # Specify location of the files
 # -----------------------------
@@ -497,6 +499,7 @@ subset_vars <- data.frame(name = c("P0010001",
                                    "P0010006",
                                    "P0010007",
                                    "P0010008",
+                                   "P0010009",
                                    "P0020002",
                                    "P0020003",
                                    "P0020005",
@@ -510,6 +513,7 @@ subset_vars <- data.frame(name = c("P0010001",
                                      "pop_aian",
                                      "pop_asian",
                                      "pop_nhpi",
+                                     "pop_other",
                                      "pop_multi",
                                      "pop_hisp",
                                      "pop_nh",
@@ -524,33 +528,98 @@ md_data_sub <- combine %>%
   rename_with(.cols = subset_vars$name, .fn = ~ subset_vars %>%
                   filter(name == .x) %>%
                   pull(rename)) %>%
-  rename_with(tolower)
-
+  rename_with(tolower) %>%
+  mutate(across(matches("pop|hous|area"), .fns = ~ as.numeric(.x))) %>%
+  mutate(across(matches("pop"), .fns = ~ pct_round(.x, pop_tot), .names =  "{.col}_pct")) %>%
+  mutate(across(matches("hous"), .fns = ~ pct_round(.x, hous_tot), .names =  "{.col}_pct")) %>%
+  # square mile conversion - https://www.census.gov/quickfacts/fact/note/US/LND110210
+  mutate(arealand_miles = arealand / 2589988,
+         pop_density =  round(pop_tot / arealand_miles, 2),
+         housing_density = round(hous_tot / arealand_miles, 2))
 
 # write
 md_shp <- st_read("./data/shapefiles/tl_2020_24_tabblock20.shp")
 
 md_data <- md_shp  %>%
   left_join(md_data_sub, by = c("GEOID20" = "geocode")) %>%
-  rename_all(tolower)
+  rename_all(tolower) %>%
+  st_transform(4326)
 
-st_write(pg_mont_data, "./data/output/shapefiles/md_data.geojson")
-
+st_write(md_data, "./data/output/shapefiles/md_data.geojson", delete_dsn = T)
 
 mont_pg_fp <- c("031", "033")
 
-pg_mont <- md_shp %>%
-  filter(COUNTYFP20 %in% mont_pg_fp)
+pg_mont_data <- md_data %>%
+  filter(countyfp20 %in% mont_pg_fp)
 
-pg_mont_data <- pg_mont %>%
-  left_join(md_data_sub, by = c("GEOID20" = "geocode")) %>%
-  rename_all(tolower)
+st_write(pg_mont_data, "./data/output/shapefiles/pg_mont_data.geojson", delete_dsn = T)
 
-st_write(pg_mont_data, "./data/output/shapefiles/pg_mont_data.geojson")
+city_poly <- st_read("./data/city_poly.geojson")
+
+# blocks intersecting with city boundaries
+intersect_blocks <- md_data %>%
+  st_intersects(city_poly %>% st_transform(4326), sparse = T)
+
+
+intersects_blocks <- md_data[lengths(intersect_blocks) > 0, ]
+
+st_write(intersects_blocks, "./data/output/shapefiles/city_blocks.geojson", delete_dsn = T)
 
 # pg_mont_data <- pg_mont %>%
 #   anti_join(md_data_sub, by = c("GEOID20" = "geocode")) %>%
 #   rename_all(tolower)
 
 
+### process place data
+# unique place fips = state code + place - https://www.census.gov/programs-surveys/geography/guidance/geo-identifiers.html
+md_data_stateplace <- md_data_sub %>%
+  filter(!is.na(place) & place != "") %>%
+  mutate(state_place = paste0(state, place))
 
+# read in census geocodes
+geocodes_2020 <- openxlsx::read.xlsx("./data/census_fips/all-geocodes-v2020.xlsx", startRow = 5) %>%
+  rename_all(tolower) %>%
+  rename_all(.funs = ~ gsub("\\(", "", .x) %>%
+               gsub("\\)", "", .) %>%
+               gsub("\\.", "_", .) %>%
+               gsub("/", "", .))
+
+geocodes_2020_statefips <- geocodes_2020 %>%
+  mutate(state_place = paste0(state_code_fips, place_code_fips)) %>%
+  rename(name = area_name_including_legalstatistical_area_description)
+
+
+# join places to stateplace file
+md_data_stateplace_filter <- md_data_stateplace %>%
+  left_join(geocodes_2020_statefips %>% select(state_place, name)) %>%
+  filter(!is.na(name)) %>%
+  # filter to state-place geography
+  filter(sumlev == 160)
+
+# confirm each place unique
+nrow(md_data_stateplace_filter) == length(unique(md_data_stateplace_filter$name))
+
+# md_data_stateplace_stateplace_county <- md_data_stateplace %>%
+#   left_join(geocodes_2020_statefips %>% select(state_place, name)) %>%
+#   filter(!is.na(name)) %>%
+#   # filter to state-place geography
+#   filter(sumlev == 155)
+
+# md_data_stateplace_stateplace_county$name %>% unique
+
+# write md place data
+write.csv(md_data_stateplace_filter, "./data/output/md_data_stateplace_filter.csv")
+
+# read in places 2020
+shp_places <- st_read("./data/shapefiles/md_places_2020/tl_2020_24_place.shp") %>%
+  mutate(state_place = paste0(STATEFP, PLACEFP))
+
+# merge
+shp_places_data <- md_data_stateplace_filter %>%
+  left_join(shp_places, "state_place")
+
+# write
+st_write(shp_places_data, "./data/output/shapefiles/md_places_data.geojson", delete_dsn = T)
+
+
+# read in
